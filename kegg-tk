@@ -1,0 +1,274 @@
+#!/usr/bin/perl -w
+
+use strict;
+use warnings;
+use Switch;
+use LWP::Simple;
+
+my $usage = <<_EOUSAGE_;
+
+Usage: kegg-tk <command> <arguments>
+supports:
+
+    html   <pathway.map>  <dir>
+    images                <dir>
+    keg2tab               <keg>
+    aaseq  <list>         <batch:5>
+
+
+Licenced:
+(c) 2020-2020 - LEI ZHANG
+Logic Informatics Co.,Ltd.
+zhanglei\@logicinformatics.com
+
+_EOUSAGE_
+;
+
+if( ( scalar @ARGV) < 1){
+    printf STDERR $usage;
+    exit;
+
+}
+my $dir           = "";
+my $max_level     = ();
+my $cmd           = shift @ARGV; 
+
+switch($cmd){
+
+    case 'html'    { html_run();    }
+    case 'images'  { images_run();  }
+    case 'keg2tab' { keg2tab_run(); }
+    case 'aaseq'   { aaseq_run(); }
+    else           { print qq{[ERR]: not support ' $cmd ' subcommond!\n};};
+
+}
+
+exit;
+
+sub html_run{
+
+    if(@ARGV != 2){
+        printf STDERR qq{\n[ERR] arguments number error!\n$usage};
+        exit;
+    }
+
+    my $pathway = shift @ARGV;
+       $dir     = shift @ARGV;
+
+    system qq{mkdir -p $dir};
+    get_html_link( $pathway, $dir );
+
+}
+
+sub get_html_link{
+
+    my ($pathway, $url) = (shift, shift);
+    open ( KEGG, $pathway ) || die "$!";
+    
+    my $flag = 0;
+    while (<KEGG>) {
+
+        chomp;
+        $flag = 1 if(/Carbohydrate metabolism/);
+        next if(!/kegg-bin\/show_pathway/ || $flag == 0);
+
+        my ($url) = $_=~/href=\"(.+?)\"/;
+        #01200&nbsp;&nbsp;<a href="http://www.kegg.jp/kegg-bin/show_pathway?hsa01200">Carbon metabolism</a><br>
+        #https://www.kegg.jp/kegg-bin/show_pathway?map=map00010&amp;show_description=show
+        my ($map) = $url =~ /show_pathway\?map=(\S+?)\&/;
+        get_html($map, $url);
+        print $map. "\n";
+    }
+
+    close KEGG;
+
+}
+
+sub get_html {
+    
+    my ($map, $url) = (shift, shift);
+    
+    if($url !~ /http/){
+       $url = 'http://www.kegg.jp'.$url;
+    }
+
+    print $url, "\n";
+
+    return if(-e qq{$dir/$map.html});
+    open( FILE, qq{>$dir/$map.html} ) || die "$!";
+    my $content = get($url);
+    print FILE $content;
+    close FILE;
+
+}
+
+sub images_run{
+
+    if(@ARGV != 1){
+        printf STDERR qq{\n[ERR] arguments number error!\n$usage};
+        exit;
+    }
+
+    $dir = shift @ARGV;
+    get_image_link();
+
+}
+
+sub get_image_link{
+
+    opendir ( KEGG, $dir ) || die "$!";
+    while(my $html = readdir( KEGG )){
+        
+        chomp $html;
+        next if($html !~ /html/);
+        
+        open (DATA, "$dir/$html") || die "$!";
+        local $/ = undef;
+        while (<DATA>) {
+
+            #<img src="/kegg/pathway/ath/ath04075.png" usemap="#mapdata" border="0" />
+            my  $image = "";
+            if( $_ =~ /\<img src=\"(\/kegg\/pathway.*?)\"/ ){
+                $image  = $1;
+            }else{
+                print "$html\n";
+            }
+               
+               $image   = 'http://www.genome.jp'.$image;
+            my ($map)   = $image =~ /(\w+.png)$/;
+            next if(-e "$dir/$map");
+            get_image( $map, $image);
+
+        }
+        local $/ = "\n";
+        close DATA;
+    }
+    close KEGG;
+
+
+}
+
+sub get_image {
+    
+    my ($map, $url) = (shift, shift);
+    open( FILE, qq{>$dir/$map} ) || die "$!";
+    my $content = get($url);
+    print FILE $content;
+    close FILE;
+
+}
+
+sub keg2tab_run{
+
+    if(@ARGV != 1){
+        printf STDERR qq{\n[ERR] arguments number error!\n$usage};
+        exit;
+    }
+
+    my $keg = shift @ARGV;
+    load_keg( $keg );
+
+}
+
+sub load_keg{
+
+    my $keg = shift;
+    open (KEGG,    $keg         ) || die "$keg\t$! \n";
+    local $/=undef;    
+    my %annotation = ();
+    
+    while(<KEGG>){
+
+        ($max_level) = $_ =~ /^\+(\S)/;
+        if(! defined $max_level){
+            warn "$keg\n";
+            next;
+        }
+        
+        $_ =~ s/<b>//g;
+        $_ =~ s/<\/b>//g;
+
+        keg_iter($_, '|', '|', 'A');
+
+    }
+    local $/ ="\n";
+    close KEGG;
+}
+
+sub keg_iter{
+    
+    my ( $text, $prev, $current, $stats ) =  @_;
+    return  if( ord($stats) > ord($max_level) );
+    
+    foreach my $level (split /\n$stats/, $text){
+
+        next if($level =~ /#DEFINITION/ || $level !~ /\S/ );
+        #if($stats eq "C"){print $level, "\n\n\n\n\n";}
+
+        my $nxt = chr( ord( $stats ) + 1);
+        my ($hierarchy) = $level =~ /^\s*(.+)/;
+
+        if($level !~ /\n$nxt/){
+            # if($stats ne  $max_level){
+            #     print  EXPORT  $current, "\n";
+            # }else{
+            #     print  EXPORT  $current. '|' . $hierarchy . "\n";
+            # }
+            print  $current. "\t" . $hierarchy . "\n";
+            next;
+        
+        }else{
+            if($stats eq "A"){
+                ($prev, $current) = ($hierarchy, $hierarchy) 
+            }else{
+                $prev = $current . "\t" . $hierarchy;
+            }
+            $level =~ s/^(.+)//;
+            keg_iter( $level, $current , $prev, $nxt);
+        }
+        
+            
+    }
+}
+
+sub aaseq_run{
+
+    if(@ARGV != 2){
+        printf STDERR qq{\n[ERR] arguments number error!\n$usage};
+        exit;
+    }
+
+    my $list  = shift @ARGV;
+    my $batch = shift @ARGV;
+
+    aaseq( $list, $batch );
+
+}
+
+sub aaseq {
+
+    my ($list, $batch) = (shift, shift);
+    
+    my $fh;
+    ($list eq '-') ? ( $fh = "STDIN" ) :
+                      (open( $fh, $list ) || die "$!\n");
+
+    my @t  = ();
+
+    while (<$fh>) {
+        chomp;
+        if(scalar @t == $batch){
+            print qq{curl http://rest.kegg.jp/get/}. join("+", @t) . qq{/aaseq\n};
+            @t = ();
+        } 
+        push @t, $_;
+    }
+
+    if(scalar @t > 0){
+        print qq{curl http://rest.kegg.jp/get/}. join("+", @t) . qq{/aaseq\n};
+        @t = ();
+    }
+
+    close $fh;
+
+}
