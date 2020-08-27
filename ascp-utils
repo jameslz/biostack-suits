@@ -14,9 +14,10 @@ supports:
 
     sra <list>
     ftp <list>
+    ena <list>
 
 Licenced:
-(c) 2018-2018 - LEI ZHANG
+(c) 2018-2020 - LEI ZHANG
 Logic Informatics Co.,Ltd.
 zhanglei\@logicinformatics.com
 
@@ -43,6 +44,7 @@ switch($cmd){
 
     case 'sra'   { sra_run(); };
     case 'ftp'   { ftp_run(); };
+    case 'ena'   { ena_run(); };
 
 }
 
@@ -92,5 +94,44 @@ sub ftp {
 
    print  $ascp;
    system $ascp;
+
+}
+
+
+sub ena_run{
+
+    if(@ARGV < 1){
+        printf STDERR qq{\n[ERR] arguments number error!\n$usage};
+        exit;
+    }
+
+    my $list = shift @ARGV;
+    ascp_ena( $list );
+
+}
+
+sub ascp_ena {
+  
+  my $list = shift;
+  open( ENA,  $list )   || die "[ERR]: can't open $list. \n";
+  while(<ENA>){
+        $_ =~ s/\s+$//;
+        next if(/study_accession/);
+        my @t = split /\t/, $_;
+        ena($t[-1]);
+  }
+  close ENA;
+
+}
+
+sub ena{
+
+   my $url = shift;
+      $url  =~ s/ftp.sra.ebi.ac.uk\///;
+
+   my $ftp  = qq{$ascp/bin/ascp -i $ascp/etc/asperaweb_id_dsa.openssh  -QT -P33001 -QT -l6000m era-fasp\@fasp.sra.ebi.ac.uk:};
+   my $ascp = $ftp . $url . " .\n";
+
+   print  $ascp;
 
 }
